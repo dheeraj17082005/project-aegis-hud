@@ -161,7 +161,7 @@ class _VaultScreenState extends State<VaultScreen> {
           const SizedBox(height: 48),
           const Center(
             child: Text(
-              'PROJECT AEGIS v0.9.4-BETA • SOVEREIGN MESH NETWORK',
+              'AEGIS v0.9.4-BETA • SOVEREIGN MESH NETWORK',
               style: TextStyle(fontSize: 8, color: Colors.white24, letterSpacing: 4),
             ),
           ),

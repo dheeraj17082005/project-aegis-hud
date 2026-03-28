@@ -8,7 +8,7 @@ class MeshChannelService {
 
   final StreamController<List<Map<String, dynamic>>> _peersController = StreamController.broadcast();
   final StreamController<Map<String, dynamic>> _messagesController = StreamController.broadcast();
-  
+
   Stream<List<Map<String, dynamic>>> get peersStream => _peersController.stream;
   Stream<Map<String, dynamic>> get messagesStream => _messagesController.stream;
 
@@ -29,23 +29,24 @@ class MeshChannelService {
             }
             return <String, dynamic>{};
           }).toList();
-          
+
           _peersController.add(typedPeers);
-          debugPrint('Dart _peersController added ${typedPeers.length} peers');
+          debugPrint('Dart _peersController: ${typedPeers.length} peers');
         } else if (type == 'messageReceived') {
           _messagesController.add({
             'message': event['message'],
             'sender': event['sender'],
+            'transport': event['transport'] ?? 'udp',
           });
-          debugPrint('Dart _messagesController processed inbound public broadcast.');
+          debugPrint('Dart: inbound message from ${event["sender"]} via ${event["transport"] ?? "udp"}');
         } else if (type == 'discoveryState') {
-          debugPrint('Dart internal mapping: Discovery State Changed: ${event["state"]}');
+          debugPrint('Discovery state: ${event["state"]}');
         } else if (type == 'error') {
-          debugPrint('Native Error reported over EventChannel: ${event["message"]}');
+          debugPrint('Native error: ${event["message"]}');
         }
       }
     } catch (e, stacktrace) {
-      debugPrint('CRITICAL FAIL: Error processing EventChannel payload: $e \n $stacktrace');
+      debugPrint('CRITICAL FAIL: EventChannel parse error: $e\n$stacktrace');
     }
   }
 
@@ -53,12 +54,25 @@ class MeshChannelService {
     debugPrint('EventChannel error: $error');
   }
 
+  /// Returns the native ANDROID_ID used in beacons and peer routing.
+  /// This MUST be used as the MeshProvider's deviceId so that
+  /// private message filtering (toId == deviceId) works correctly.
+  Future<String> getDeviceId() async {
+    try {
+      final result = await _methodChannel.invokeMethod<String>('getDeviceId');
+      return result ?? '';
+    } on PlatformException catch (e) {
+      debugPrint('PlatformException [getDeviceId]: ${e.message}');
+      return '';
+    }
+  }
+
   Future<bool> startDiscovery() async {
     try {
       final result = await _methodChannel.invokeMethod<bool>('startDiscovery');
       return result ?? false;
     } on PlatformException catch (e) {
-      debugPrint('PlatformException [startDiscovery]: ${e.message} - ${e.details}');
+      debugPrint('PlatformException [startDiscovery]: ${e.message}');
       throw Exception(e.message ?? 'Unknown Platform Error');
     }
   }
@@ -81,6 +95,17 @@ class MeshChannelService {
     } on PlatformException catch (e) {
       debugPrint('PlatformException [stopDiscovery]: ${e.message}');
       throw Exception(e.message ?? 'Unknown Platform Error');
+    }
+  }
+
+  /// Pushes the user's callsign to the native layer so it's embedded in beacons.
+  Future<bool> setCallsign(String callsign) async {
+    try {
+      final result = await _methodChannel.invokeMethod<bool>('setCallsign', {'callsign': callsign});
+      return result ?? false;
+    } on PlatformException catch (e) {
+      debugPrint('PlatformException [setCallsign]: ${e.message}');
+      return false;
     }
   }
 

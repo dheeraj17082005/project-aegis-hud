@@ -13,170 +13,391 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
+    // Mark as active chat so incoming messages don't increment unread
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(meshProvider).activeChatPeerId = widget.peerId;
+      ref.read(meshProvider).markAsRead(widget.peerId);
+    });
+  }
+
+  @override
+  void dispose() {
+    // Clear active chat tracking when leaving screen
+    ref.read(meshProvider).activeChatPeerId = null;
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
   }
 
   void _sendMessage() {
-    if (_controller.text.trim().isEmpty) return;
-
-    ref.read(meshProvider).sendPrivateMessage(widget.peerId, _controller.text);
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+    ref.read(meshProvider).sendPrivateMessage(widget.peerId, text);
     _controller.clear();
-  }
-
-  List<Message> _getAllMessages() {
-    // Both sent AND received private messages are now stored in `privateMessages` by the provider
-    final inbound = ref.watch(meshProvider).getPrivateMessages(widget.peerId);
-    return inbound.map((msg) => Message(
-      sender: msg['sender'] as String? ?? 'Ghost',
-      text: msg['message'] as String? ?? '',
-      time: msg['time'] as String? ?? '${DateTime.now().hour.toString().padLeft(2,'0')}:${DateTime.now().minute.toString().padLeft(2,'0')}',
-      isMe: (msg['sender'] == 'me'),
-    )).toList();
   }
 
   @override
   Widget build(BuildContext context) {
-    final allMessages = _getAllMessages();
+    final mesh = ref.watch(meshProvider);
+    final messages = mesh.getPrivateMessages(widget.peerId);
+    final displayName = mesh.getDisplayName(widget.peerId);
+    final primary = Theme.of(context).primaryColor;
 
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        titleSpacing: 0,
+        title: Row(
           children: [
-            const Text('Aegis Tunnel', style: TextStyle(fontSize: 10, color: Colors.white54, letterSpacing: 2)),
-            Text('PEER: ${widget.peerId}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-          ],
-        ),
-        actions: [
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.only(right: 16.0),
-              child: Row(
+            // Avatar circle
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: primary.withValues(alpha: 0.15),
+                border: Border.all(color: primary.withValues(alpha: 0.4)),
+              ),
+              child: Center(
+                child: Text(
+                  displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                  style: TextStyle(color: primary, fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.security, size: 12, color: Theme.of(context).primaryColor.withValues(alpha: 0.6)),
-                  const SizedBox(width: 4),
-                  Text('E2EE ACTIVE', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor.withValues(alpha: 0.6))),
+                  Text(
+                    displayName,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Row(
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: primary,
+                          boxShadow: [BoxShadow(color: primary.withValues(alpha: 0.6), blurRadius: 4)],
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'E2EE ACTIVE  •  ${widget.peerId.length > 16 ? widget.peerId.substring(0, 16) + "…" : widget.peerId}',
+                        style: TextStyle(fontSize: 9, color: primary.withValues(alpha: 0.7), letterSpacing: 0.5),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
-          )
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.security, size: 18, color: primary.withValues(alpha: 0.7)),
+            tooltip: 'Encrypted tunnel',
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: const Color(0xFF0A0F14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: primary.withValues(alpha: 0.3)),
+                  ),
+                  title: Row(
+                    children: [
+                      Icon(Icons.lock, color: primary, size: 18),
+                      const SizedBox(width: 8),
+                      Text('Tunnel Info', style: TextStyle(color: primary, fontSize: 14)),
+                    ],
+                  ),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _infoRow('Protocol', 'Double Ratchet + X3DH'),
+                      _infoRow('Cipher', 'AES-256-GCM'),
+                      _infoRow('Transport', 'BLE + LAN UDP'),
+                      _infoRow('Peer ID', widget.peerId),
+                      _infoRow('Status', 'No server. Fully offline.'),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text('CLOSE', style: TextStyle(color: primary)),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ],
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16.0),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(16),
+          // Encrypted tunnel banner
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            color: primary.withValues(alpha: 0.06),
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.lock, size: 10, color: primary.withValues(alpha: 0.6)),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Messages are end-to-end encrypted. No server. No log.',
+                    style: TextStyle(fontSize: 9, color: primary.withValues(alpha: 0.6), letterSpacing: 0.5),
+                  ),
+                ],
               ),
-              child: const Text('Vault Secured: Local Data Only. Volatile Memory Active.', style: TextStyle(fontSize: 8, color: Colors.white54, letterSpacing: 2)),
             ),
           ),
+
+          // Message list
           Expanded(
-            child: allMessages.isEmpty
-                ? const Center(child: Text('Searching for Ghosts...', style: TextStyle(color: Colors.white54, letterSpacing: 2)))
+            child: messages.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.chat_bubble_outline, size: 48, color: primary.withValues(alpha: 0.2)),
+                        const SizedBox(height: 12),
+                        Text('No messages yet', style: TextStyle(color: Colors.white30, fontSize: 13)),
+                        const SizedBox(height: 4),
+                        Text('Say hi to $displayName', style: TextStyle(color: Colors.white24, fontSize: 10)),
+                      ],
+                    ),
+                  )
                 : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: allMessages.length,
-              itemBuilder: (context, index) {
-                final msg = allMessages[index];
-                return _buildMessageBubble(msg);
-              },
-            ),
+                    controller: _scrollController,
+                    reverse: true,
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      final msg = messages[index];
+                      final isMe = msg['sender'] == 'me';
+                      final text = msg['message'] as String? ?? '';
+                      final time = msg['time'] as String? ?? '';
+                      final status = msg['status'] as MessageStatus? ?? MessageStatus.delivered;
+
+                      // Show date separator for first message or day changes (simplified)
+                      return _MessageBubble(
+                        text: text,
+                        time: time,
+                        isMe: isMe,
+                        status: status,
+                        senderName: isMe ? null : (msg['senderName'] as String?),
+                      );
+                    },
+                  ),
           ),
-          _buildInputBar(),
+
+          // Input bar
+          _buildInputBar(primary),
         ],
       ),
     );
   }
 
-  Widget _buildMessageBubble(Message msg) {
-    return Align(
-      alignment: msg.isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
-        child: Column(
-          crossAxisAlignment: msg.isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+  Widget _buildInputBar(Color primary) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        border: Border(top: BorderSide(color: primary.withOpacity(0.15))),
+      ),
+      child: SafeArea(
+        child: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: msg.isMe ? Theme.of(context).primaryColor.withValues(alpha: 0.1) : Colors.white.withValues(alpha: 0.05),
-                border: Border.all(color: msg.isMe ? Theme.of(context).primaryColor.withValues(alpha: 0.4) : Colors.white24),
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(8),
-                  topRight: const Radius.circular(8),
-                  bottomLeft: msg.isMe ? const Radius.circular(8) : Radius.zero,
-                  bottomRight: msg.isMe ? Radius.zero : const Radius.circular(8),
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  border: Border.all(color: primary.withOpacity(0.2)),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: TextField(
+                        controller: _controller,
+                        style: const TextStyle(fontSize: 15),
+                        maxLines: 4,
+                        minLines: 1,
+                        decoration: const InputDecoration(
+                          hintText: 'Encrypted message...',
+                          hintStyle: TextStyle(color: Colors.white30, fontSize: 14),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        textInputAction: TextInputAction.newline,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      icon: const Icon(Icons.mic_none_rounded, color: Colors.white38, size: 20),
+                      onPressed: () {},
+                    ),
+                  ],
                 ),
               ),
-              child: Text(msg.text, style: TextStyle(color: msg.isMe ? Colors.white : Theme.of(context).primaryColor.withValues(alpha: 0.9), fontSize: 14)),
             ),
-            const SizedBox(height: 4),
-            Text(msg.time, style: const TextStyle(fontSize: 8, color: Colors.white30)),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: _sendMessage,
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: primary,
+                  boxShadow: [BoxShadow(color: primary.withOpacity(0.4), blurRadius: 8, spreadRadius: 1)],
+                ),
+                child: const Icon(Icons.send_rounded, color: Colors.black, size: 20),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInputBar() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        border: Border(top: BorderSide(color: Theme.of(context).primaryColor.withValues(alpha: 0.2))),
-      ),
-      child: Row(
+  Widget _infoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.05),
-                border: Border.all(color: Colors.white10),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  IconButton(icon: const Icon(Icons.mic, color: Colors.white54), onPressed: () {}),
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      style: const TextStyle(fontSize: 14),
-                      decoration: const InputDecoration(
-                        hintText: 'Secure message...',
-                        hintStyle: TextStyle(color: Colors.white30),
-                        border: InputBorder.none,
-                      ),
-                      onSubmitted: (_) => _sendMessage(),
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.send, color: Theme.of(context).primaryColor),
-                    onPressed: _sendMessage,
-                  ),
-                ],
-              ),
-            ),
-          ),
+          Text(label.toUpperCase(), style: const TextStyle(fontSize: 8, color: Colors.white30, letterSpacing: 1)),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(fontSize: 12, color: Colors.white70)),
         ],
       ),
     );
   }
 }
 
-class Message {
-  final String sender;
+class _MessageBubble extends StatelessWidget {
   final String text;
   final String time;
   final bool isMe;
+  final MessageStatus status;
+  final String? senderName;
 
-  Message({required this.sender, required this.text, required this.time, required this.isMe});
+  const _MessageBubble({
+    required this.text,
+    required this.time,
+    required this.isMe,
+    required this.status,
+    this.senderName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).primaryColor;
+
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+        child: Column(
+          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+              decoration: BoxDecoration(
+                color: isMe
+                    ? primary.withOpacity(0.18)
+                    : Colors.white.withOpacity(0.07),
+                border: Border.all(
+                  color: isMe
+                      ? primary.withOpacity(0.45)
+                      : Colors.white.withOpacity(0.1),
+                ),
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: Radius.circular(isMe ? 16 : 2),
+                  bottomRight: Radius.circular(isMe ? 2 : 16),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Sender name for inbound messages
+                  if (!isMe && senderName != null && senderName!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        senderName!,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: primary,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  Text(
+                    text,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: isMe ? Colors.white : Colors.white.withOpacity(0.9),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        time,
+                        style: const TextStyle(fontSize: 9, color: Colors.white30),
+                      ),
+                      if (isMe) ...[
+                        const SizedBox(width: 6),
+                        _buildStatusIcon(primary),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusIcon(Color primary) {
+    switch (status) {
+      case MessageStatus.sending:
+        return SizedBox(
+          width: 8,
+          height: 8,
+          child: CircularProgressIndicator(strokeWidth: 1.2, color: primary.withOpacity(0.5)),
+        );
+      case MessageStatus.sent:
+        return const Icon(Icons.done, size: 12, color: Colors.white24);
+      case MessageStatus.delivered:
+        return Icon(Icons.done_all, size: 12, color: primary);
+      case MessageStatus.failed:
+        return const Icon(Icons.error_outline, size: 12, color: Colors.redAccent);
+    }
+  }
 }

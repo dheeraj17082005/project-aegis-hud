@@ -32,54 +32,107 @@ class _OmniScreenState extends ConsumerState<OmniScreen> {
     
     return Scaffold(
       appBar: AppBar(
-        title: Column(
+        title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Text('Omni Protocol', style: TextStyle(fontSize: 10, color: Colors.white54, letterSpacing: 2)),
             Text('PUBLIC SQUARE (TACTICAL FEED)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.flash_on, size: 18),
+            onPressed: () {
+              ref.read(meshProvider).refreshMesh();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Protocol Resync: Clearing peers and re-scanning...'),
+                  backgroundColor: Color(0xFF00D1FF),
+                  behavior: SnackBarBehavior.floating,
+                )
+              );
+            },
+            tooltip: 'Initiate Protocol',
+          ),
+        ],
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 8),
+            child: Row(
+              children: const [
+                Icon(Icons.code, size: 16),
+                SizedBox(width: 8),
+                Text('LIVE BROADCASTS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Row(
-                  children: const [
-                    Icon(Icons.code, size: 16),
-                    SizedBox(width: 8),
-                    Text('LIVE BROADCASTS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                if (feed.isEmpty)
-                  const Center(
+            child: feed.isEmpty
+                ? const Center(
                     child: Padding(
                       padding: EdgeInsets.all(32),
                       child: Text('Listening for broadcasts...', style: TextStyle(color: Colors.white54, letterSpacing: 2)),
                     ),
+                  )
+                : ListView.builder(
+                    reverse: true,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    itemCount: feed.length,
+                    itemBuilder: (context, index) {
+                      final msg = feed[index];
+                      // Use true identity if sender is marked 'me' or matches our ID
+                      final isMe = msg['sender'] == 'me' || msg['sender'] == ref.read(meshProvider).deviceId;
+                      final time = msg['time'] as String? ?? '--:--';
+                      final senderName = msg['senderName'] as String? ?? msg['sender'] as String? ?? 'Ghost';
+
+                      return Align(
+                        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(12),
+                          constraints: BoxConstraints(
+                            maxWidth: MediaQuery.of(context).size.width * 0.75,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isMe
+                                ? Theme.of(context).primaryColor.withValues(alpha: 0.2)
+                                : Theme.of(context).primaryColor.withValues(alpha: 0.05),
+                            border: Border.all(
+                                color: isMe
+                                    ? Theme.of(context).primaryColor.withValues(alpha: 0.5)
+                                    : Theme.of(context).primaryColor.withValues(alpha: 0.2)),
+                            borderRadius: BorderRadius.only(
+                              topLeft: const Radius.circular(12),
+                              topRight: const Radius.circular(12),
+                              bottomLeft: Radius.circular(isMe ? 12 : 0),
+                              bottomRight: Radius.circular(isMe ? 0 : 12),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (!isMe)
+                                Text(senderName,
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        color: Theme.of(context).primaryColor,
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 1)),
+                              if (!isMe) const SizedBox(height: 4),
+                              Text(msg['message'] as String? ?? '', style: const TextStyle(fontSize: 14)),
+                              const SizedBox(height: 4),
+                              Align(
+                                alignment: Alignment.bottomRight,
+                                child: Text(time, style: const TextStyle(fontSize: 8, color: Colors.white30)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                ...feed.map((msg) => Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Theme.of(context).primaryColor.withValues(alpha: 0.2)),
-                        color: Theme.of(context).primaryColor.withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(msg['sender'] as String? ?? 'Ghost', style: TextStyle(fontSize: 10, color: Theme.of(context).primaryColor, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 4),
-                          Text(msg['message'] as String? ?? '', style: const TextStyle(fontSize: 14)),
-                        ],
-                      ),
-                    )),
-              ],
-            ),
           ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
